@@ -570,6 +570,9 @@ def cmd_object_get(args):
             last_modified = time.mktime(time.strptime(response["headers"]["last-modified"], "%a, %d %b %Y %H:%M:%S GMT"))
             os.utime(deunicodise(destination), (last_modified, last_modified))
             debug("set mtime to %s" % last_modified)
+        if response.has_key('s3cmd-attrs') and cfg.preserve_attrs:
+            _apply_s3_attrs_to_destination(response['s3cmd-attrs'],destination)
+
         if not Config().progress_meter and destination != "-":
             speed_fmt = formatSize(response["speed"], human_readable = True, floating_point = True)
             output(u"download: '%s' -> '%s' (%d bytes in %0.1f seconds, %0.2f %sB/s)" %
@@ -1237,17 +1240,7 @@ def cmd_sync_remote2local(args):
 
             try:
                 if response.has_key('s3cmd-attrs') and cfg.preserve_attrs:
-                    attrs = response['s3cmd-attrs']
-                    if attrs.has_key('mode'):
-                        os.chmod(deunicodise(dst_file), int(attrs['mode']))
-                    if attrs.has_key('mtime') or attrs.has_key('atime'):
-                        mtime = attrs.has_key('mtime') and int(attrs['mtime']) or int(time.time())
-                        atime = attrs.has_key('atime') and int(attrs['atime']) or int(time.time())
-                        os.utime(deunicodise(dst_file), (atime, mtime))
-                    if attrs.has_key('uid') and attrs.has_key('gid'):
-                        uid = int(attrs['uid'])
-                        gid = int(attrs['gid'])
-                        os.lchown(deunicodise(dst_file),uid,gid)
+                    _apply_s3_attrs_to_destination(response['s3cmd-attrs'], dst_file)
                 elif response["headers"].has_key("last-modified"):
                     last_modified = time.mktime(time.strptime(response["headers"]["last-modified"], "%a, %d %b %Y %H:%M:%S GMT"))
                     os.utime(deunicodise(dst_file), (last_modified, last_modified))
@@ -2409,7 +2402,7 @@ def main():
     optparser.add_option(      "--max-delete", dest="max_delete", action="store", help="Do not delete more than NUM files. [del] and [sync]", metavar="NUM")
     optparser.add_option(      "--add-destination", dest="additional_destinations", action="append", help="Additional destination for parallel uploads, in addition to last arg.  May be repeated.")
     optparser.add_option(      "--delete-after-fetch", dest="delete_after_fetch", action="store_true", help="Delete remote objects after fetching to local file (only for [get] and [sync] commands).")
-    optparser.add_option("-p", "--preserve", dest="preserve_attrs", action="store_true", help="Preserve filesystem attributes (mode, ownership, timestamps). Default for [sync] command.")
+    optparser.add_option("-p", "--preserve", dest="preserve_attrs", action="store_true", help="Preserve filesystem attributes (mode, ownership, timestamps). Default for [sync] and [get] commands.")
     optparser.add_option(      "--no-preserve", dest="preserve_attrs", action="store_false", help="Don't store FS attributes")
     optparser.add_option(      "--exclude", dest="exclude", action="append", metavar="GLOB", help="Filenames and paths matching GLOB will be excluded from sync")
     optparser.add_option(      "--exclude-from", dest="exclude_from", action="append", metavar="FILE", help="Read --exclude GLOBs from FILE")
@@ -2775,6 +2768,19 @@ def report_exception(e, msg=''):
    s3tools-bugs@lists.sourceforge.net
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 """)
+
+def _apply_s3_attrs_to_destination(s3attrs, destination):
+    if s3attrs:
+        if s3attrs.has_key('mode'):
+            os.chmod(deunicodise(destination), int(s3attrs['mode']))
+        if s3attrs.has_key('mtime') or s3attrs.has_key('atime'):
+            mtime = s3attrs.has_key('mtime') and int(s3attrs['mtime']) or int(time.time())
+            atime = s3attrs.has_key('atime') and int(s3attrs['atime']) or int(time.time())
+            os.utime(deunicodise(destination), (atime, mtime))
+        if s3attrs.has_key('uid') and s3attrs.has_key('gid'):
+            uid = int(s3attrs['uid'])
+            gid = int(s3attrs['gid'])
+            os.lchown(deunicodise(destination), uid, gid)
 
 if __name__ == '__main__':
     try:
