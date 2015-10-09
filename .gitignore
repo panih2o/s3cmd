@@ -7,3 +7,5 @@ testsuite-out
 build/*
 s3cmd.spec
 .idea
+s3cmd.egg-info/
+s3cmd.iml
