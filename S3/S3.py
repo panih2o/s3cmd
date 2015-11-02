@@ -31,7 +31,7 @@ from Config import Config
 from Exceptions import *
 from MultiPart import MultiPartUpload
 from S3Uri import S3Uri
-from ConnMan import ConnMan
+from ConnMan import ConnMan, CertificateError
 from Crypto import sign_string_v2, sign_string_v4, checksum_sha256_file, checksum_sha256_buffer
 
 try:
@@ -386,7 +386,10 @@ class S3(object):
     def bucket_info(self, uri):
         response = {}
         response['bucket-location'] = self.get_bucket_location(uri)
-        response['requester-pays'] = self.get_bucket_requester_pays(uri)
+        try:
+            response['requester-pays'] = self.get_bucket_requester_pays(uri)
+        except S3Error as e:
+            response['requester-pays'] = 'none'
         return response
 
     def website_info(self, uri, bucket_location = None):
@@ -749,7 +752,13 @@ class S3(object):
             raise S3Error(response)
 
         if self.config.acl_public is None:
-            self.set_acl(dst_uri, acl)
+            try:
+                self.set_acl(dst_uri, acl)
+            except S3Error as exc:
+                # Ignore the exception and don't fail the copy
+                # if the server doesn't support setting ACLs
+                if exc.status != 501:
+                    raise exc
         return response
 
     def object_modify(self, src_uri, dst_uri, extra_headers = None):
@@ -1079,6 +1088,8 @@ class S3(object):
         except ParameterError, e:
             raise
         except OSError:
+            raise
+        except CertificateError:
             raise
         except (IOError, Exception), e:
             if hasattr(e, 'errno') and e.errno != errno.EPIPE:
