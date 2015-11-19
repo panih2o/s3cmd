@@ -1,3 +1,7 @@
+s3cmd-1.6.2      - 2015-11-18
+===============
+* s3cmd get shouldn't apply permissions when destination is '-'
+
 s3cmd-1.6.1      - 2015-09-25
 ===============
 * Enable permissions preserve for s3cmd get
