@@ -161,33 +161,38 @@ class S3Request(object):
         return False
 
     def sign(self):
-        h  = self.method_string + "\n"
-        h += self.headers.get("content-md5", "")+"\n"
-        h += self.headers.get("content-type", "")+"\n"
-        h += self.headers.get("date", "")+"\n"
-        for header in sorted(self.headers.keys()):
-            if header.startswith("x-amz-"):
-                h += header+":"+str(self.headers[header])+"\n"
-            if header.startswith("x-emc-"):
-                h += header+":"+str(self.headers[header])+"\n"
-        if self.resource['bucket']:
-            h += "/" + self.resource['bucket']
-        h += self.resource['uri']
-
         if self.use_signature_v2():
+            h  = self.method_string + "\n"
+            h += self.headers.get("content-md5", "")+"\n"
+            h += self.headers.get("content-type", "")+"\n"
+            h += self.headers.get("date", "")+"\n"
+            for header in sorted(self.headers.keys()):
+                if header.startswith("x-amz-"):
+                    h += header+":"+str(self.headers[header])+"\n"
+                if header.startswith("x-emc-"):
+                    h += header+":"+str(self.headers[header])+"\n"
+            if self.resource['bucket']:
+                h += "/" + self.resource['bucket']
+            h += self.resource['uri']
             debug("Using signature v2")
             debug("SignHeaders: " + repr(h))
             signature = sign_string_v2(h)
             self.headers["Authorization"] = "AWS "+self.s3.config.access_key+":"+signature
         else:
             debug("Using signature v4")
-            self.headers = sign_string_v4(self.method_string,
-                                          self.s3.get_hostname(self.resource['bucket']),
-                                          self.resource['uri'],
-                                          self.params,
-                                          S3Request.region_map.get(self.resource['bucket'], Config().bucket_location),
-                                          self.headers,
-                                          self.body)
+            hostname = self.s3.get_hostname(self.resource['bucket'])
+
+            ## Default to bucket part of DNS.
+            resource_uri = self.resource['uri']
+            ## If bucket is not part of DNS assume path style to complete the request.
+            if not check_bucket_name_dns_support(self.s3.config.host_bucket, self.resource['bucket']):
+                if self.resource['bucket']:
+                    resource_uri = "/" + self.resource['bucket'] + self.resource['uri']
+
+            bucket_region = S3Request.region_map.get(self.resource['bucket'], Config().bucket_location)
+            ## Sign the data.
+            self.headers = sign_string_v4(self.method_string, hostname, resource_uri, self.params,
+                                          bucket_region, self.headers, self.body)
 
     def get_triplet(self):
         self.update_timestamp()
@@ -595,9 +600,12 @@ class S3(object):
         if self.config.enable_multipart:
             if size > self.config.multipart_chunk_size_mb * 1024 * 1024 or filename == "-":
                 multipart = True
+                if size > self.config.multipart_max_chunks * self.config.multipart_chunk_size_mb * 1024 * 1024:
+                    raise ParameterError("Chunk size %d MB results in more than %d chunks. Please increase --multipart-chunk-size-mb" % \
+                          (self.config.multipart_chunk_size_mb, self.config.multipart_max_chunks))
         if multipart:
             # Multipart requests are quite different... drop here
-            return self.send_file_multipart(file, headers, uri, size)
+            return self.send_file_multipart(file, headers, uri, size, extra_label)
 
         ## Not multipart...
         if self.config.put_continue:
@@ -1152,6 +1160,7 @@ class S3(object):
         size_left = size_total = long(headers["content-length"])
         filename = unicodise(file.name)
         if self.config.progress_meter:
+            labels[u'action'] = u'upload'
             progress = self.config.progress_class(labels, size_total)
         else:
             info("Sending file '%s', please wait..." % filename)
@@ -1306,10 +1315,10 @@ class S3(object):
 
         return response
 
-    def send_file_multipart(self, file, headers, uri, size):
+    def send_file_multipart(self, file, headers, uri, size, extra_label = ""):
         timestamp_start = time.time()
         upload = MultiPartUpload(self, file, uri, headers)
-        upload.upload_all_parts()
+        upload.upload_all_parts(extra_label)
         response = upload.complete_multipart_upload()
         timestamp_end = time.time()
         response["elapsed"] = timestamp_end - timestamp_start
@@ -1326,6 +1335,7 @@ class S3(object):
         method_string, resource, headers = request.get_triplet()
         filename = unicodise(stream.name)
         if self.config.progress_meter:
+            labels[u'action'] = u'download'
             progress = self.config.progress_class(labels, 0)
         else:
             info("Receiving file '%s', please wait..." % filename)
